@@ -12,15 +12,23 @@ for explicit confirmation before proceeding.
 ---
 
 ## Project Configuration
-> EDIT THESE BEFORE RUNNING
 
+Config lives in `config.local.env` (gitignored — never committed).
+
+**First-time setup:**
+```bash
+cp config.example.env config.local.env
+# then edit config.local.env with your real values
 ```
-PROJECT_ID="YOUR_PROJECT_ID"
-ORG_ID="YOUR_ORG_ID"                    # leave blank if no org
-BILLING_ACCOUNT_ID="YOUR_BILLING_ID"   # leave blank if no billing access
+
+At the start of every session, read `config.local.env` to load:
+```
+PROJECT_ID=""
+ORG_ID=""                    # leave blank if no org
+BILLING_ACCOUNT_ID=""        # leave blank if no billing access
 KEY_FILE="./gcp-scanner-key.json"
-SCAN_TIMESTAMP=""                       # auto-set at runtime
-REVIEWER_NAME=""                        # human reviewer name for audit trail
+SCAN_TIMESTAMP=""            # auto-set at runtime
+REVIEWER_NAME=""             # human reviewer name for audit trail
 ```
 
 ---
