@@ -1,16 +1,35 @@
-# GCP Security Excellence Agent
-## Claude Code Agent Documentation Package
+# Firebase Security Audit Agent
+
+## Claude Code Agent for Firebase Legacy Role Auditing
 
 ---
 
 ## What This Is
 
-A complete, self-contained agent documentation package that Claude Code can run
-autonomously to audit a GCP project and produce security documentation aligned with:
+A self-contained Claude Code agent that audits a Firebase/GCP project for security
+issues, with a focus on **legacy role (Editor/Owner) misuse** -- the most common and
+dangerous security anti-pattern in Firebase projects.
 
+Framework alignment:
 - **NIST CSF 2.0** (Govern, Identify, Protect, Detect, Respond, Recover)
-- **CIS GCP Benchmark v2.x** (L1 and L2 controls)
-- **Google Security Foundations Blueprint**
+- **Firebase Security Best Practices**
+- **Google Cloud IAM Best Practices**
+
+---
+
+## Why Legacy Roles Matter in Firebase
+
+Firebase automatically grants `roles/editor` to service accounts it creates (e.g., the
+Admin SDK SA). This is a security risk because:
+
+- **`roles/editor` bypasses all Firebase Security Rules** -- even well-crafted Firestore,
+  RTDB, and Storage rules are ineffective against principals with Editor
+- **Full project read/write** -- a compromised SA with Editor can access every resource
+- **Common accumulation** -- Firebase projects often have multiple SAs with Editor
+  (Admin SDK, App Engine default, Cloud Build, Cloud Functions)
+
+This agent systematically finds and documents all legacy role bindings with exact
+remediation commands to replace them with least-privilege alternatives.
 
 ---
 
@@ -18,97 +37,77 @@ autonomously to audit a GCP project and produce security documentation aligned w
 
 ```
 gcp-security-agent/
-│
-├── CLAUDE.md                      ← START HERE — master orchestrator
-│
-├── phases/
-│   ├── PHASE-0.md                 ← Governance & landing zone
-│   ├── PHASE-0.5.md               ← Threat model generation
-│   ├── PHASE-1.md                 ← Service discovery
-│   ├── PHASE-2.md                 ← Permission request generation (+ HUMAN GATE)
-│   ├── PHASE-3.md                 ← Permission verification
-│   ├── PHASE-4.md                 ← All technical scans (4a through 4f)
-│   ├── PHASE-5.md                 ← Risk synthesis & scoring (+ HUMAN GATE)
-│   └── PHASE-6-7.md               ← Output generation & scan integrity
-│
-└── schemas/
-    ├── finding.schema.json         ← JSON schema for individual findings
-    ├── phase-state.schema.json     ← JSON schema for phase handoff state
-    └── control-id-registry.md     ← Stable GCP-XXX-NN IDs for all controls
+|
++-- CLAUDE.md                      <- START HERE -- master orchestrator
+|
++-- phases/
+|   +-- PHASE-1.md                 <- Firebase discovery
+|   +-- PHASE-2.md                 <- IAM & legacy role audit (core)
+|   +-- PHASE-3.md                 <- Firebase security rules audit
+|   +-- PHASE-4.md                 <- Public exposure & resource audit
+|   +-- PHASE-5.md                 <- Risk synthesis & remediation (+ REVIEW GATE)
+|
++-- schemas/
+    +-- finding.schema.json        <- JSON schema for findings
+    +-- phase-state.schema.json    <- JSON schema for phase handoff state
+    +-- control-id-registry.md     <- Stable FB-XXX-NN IDs for all controls
 ```
 
 ---
 
 ## Quick Start
 
-### Step 1 — Copy this package to your working directory
+### Step 1 -- Configure
 
 ```bash
-cp -r gcp-security-agent/ ~/my-gcp-audit/
-cd ~/my-gcp-audit/
+cp config.example.env config.local.env
+# Edit config.local.env with your project ID
 ```
 
-### Step 2 — Edit CLAUDE.md with your project details
+### Step 2 -- Authenticate
 
 ```bash
-# Edit the Project Configuration block at the top of CLAUDE.md
-nano CLAUDE.md
-
-# Set:
-# PROJECT_ID="your-actual-project-id"
-# ORG_ID="your-org-id"           (or leave blank)
-# BILLING_ACCOUNT_ID="..."       (or leave blank)
-# REVIEWER_NAME="Your Name"
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
 ```
 
-### Step 3 — Start Claude Code
+This agent runs as your current gcloud user. No scanner service account is needed.
+
+### Step 3 -- Start Claude Code
 
 ```bash
 claude
 ```
 
-### Step 4 — Run the audit
+### Step 4 -- Run the audit
 
 ```
 You: Run phase 1
 ```
 
-Or to run everything with gates:
+Or to run everything:
 ```
 You: Run all
 ```
 
 ---
 
-## Phase Flow Summary
+## Phase Flow
 
 ```
-Phase 0    Governance check (org, folders, org policies)
-    ↓
-Phase 0.5  Threat model (attack paths, crown jewels, blast radius)
-    ↓
-Phase 1    Service discovery (what's enabled in the project)
-    ↓
-Phase 2    Permission request generation
-    ↓
-    ⛔ HUMAN GATE: review roles, run grant script, confirm
-    ↓
-Phase 3    Permission verification (test every role before scanning)
-    ↓
-Phase 4a   Infrastructure (VMs, disks, VPC, firewall)
-Phase 4b   Identity & access (SAs, users, keys, cross-project)
-Phase 4c   Data & secrets (GCS, KMS, SQL, Secret Manager)
-Phase 4d   Containers & supply chain (Cloud Run, AR, Cloud Build, BinAuthz)
-Phase 4e   Runtime signals (SCC threats, audit log anomalies, cost signals)
-Phase 4f   Detection & response readiness (sinks, alerting, runbook gaps)
-    ↓
-Phase 5    Risk synthesis (scored findings, project score, KPIs, top 10)
-    ↓
-    ⛔ HUMAN GATE: review findings, confirm before remediation docs published
-    ↓
-Phase 6    Full output generation (all docs, diagrams, IR playbooks)
-    ↓
-Phase 7    Scan integrity record (hashes, manifest, reviewer sign-off)
+Phase 1    Firebase discovery (services, apps, SAs, data stores)
+    |
+Phase 2    IAM & legacy role audit (Editor/Owner detection)
+    |
+Phase 3    Firebase security rules (Firestore, RTDB, Storage)
+    |
+Phase 4    Public exposure (allUsers, Functions, Hosting, Auth, App Check)
+    |
+Phase 5    Risk synthesis & remediation plan
+    |
+    [REVIEW GATE] -- human reviews findings before final docs
+    |
+    Final docs (overview, remediation plan, quick wins)
 ```
 
 ---
@@ -117,81 +116,37 @@ Phase 7    Scan integrity record (hashes, manifest, reviewer sign-off)
 
 ```
 scan-output/
-├── docs/
-│   ├── 00-overview.md             ← Executive summary + score
-│   ├── 01-compute-network.md
-│   ├── 02-storage.md
-│   ├── 03-cloud-run.md
-│   ├── 04-artifact-registry.md
-│   ├── 05-cloud-build.md
-│   ├── 06-service-accounts.md
-│   ├── 07-threat-model.md
-│   ├── remediation-plan.md        ← Top 10 with exact fix commands
-│   └── quick-wins.md              ← HIGH+ findings fixable in < 5 min
-├── audit/
-│   ├── compliance-mapping.md      ← NIST + CIS control coverage
-│   ├── sa-last-used-report.md
-│   ├── sa-key-age-report.md
-│   ├── orphaned-sa-report.md
-│   ├── org-policy-gaps.md
-│   ├── data-classification.md
-│   ├── data-exposure-findings.md
-│   ├── backup-dr-readiness.md
-│   ├── cost-anomaly-signals.md
-│   ├── sa-key-elimination-roadmap.md
-│   └── security-kpis.md
-├── diagrams/                      ← All Mermaid diagrams
-│   ├── network-topology.md
-│   ├── cicd-pipeline.md
-│   ├── connectivity-map.md
-│   ├── public-access-map.md
-│   ├── service-account-map.md
-│   ├── cross-project-trust-map.md
-│   ├── blast-radius-map.md
-│   ├── attack-paths.md
-│   └── sa-risk-matrix.md
-├── ir/
-│   ├── plan.md
-│   └── playbooks/
-│       ├── iam-escalation.md
-│       ├── public-exposure.md
-│       └── credential-compromise.md
-├── phases/                        ← Raw phase outputs (human + JSON)
-├── errors/
-│   └── permission-errors.log
-├── MANIFEST.sha256                ← Integrity hashes of all files
-└── SCAN-INTEGRITY.md              ← Audit trail + reviewer sign-off
++-- phases/                        <- Raw phase outputs (human + JSON)
++-- docs/
+|   +-- 00-overview.md             <- Executive summary + score
+|   +-- 01-iam-legacy-roles.md     <- Legacy role findings
+|   +-- 02-security-rules.md       <- Rules audit
+|   +-- 03-public-exposure.md      <- Public access findings
+|   +-- remediation-plan.md        <- Prioritized with fix commands
+|   +-- quick-wins.md              <- HIGH+ fixes in < 5 min
++-- diagrams/
+|   +-- sa-role-map.md             <- SA-to-role Mermaid diagram
+|   +-- legacy-role-blast-radius.md
++-- errors/
+|   +-- permission-errors.log
++-- SCAN-INTEGRITY.md
 ```
 
 ---
 
-## Recommended Scan Cadence
+## Control ID Registry
 
-| Scan Type | Phases | Frequency |
-|-----------|--------|-----------|
-| Identity pulse | 4b, 4e | Weekly |
-| Full posture | All phases | Monthly |
-| Post-change | Relevant phase only | After infra changes |
-| Pre-audit | All phases | Before compliance reviews |
+All findings use stable IDs in format `FB-[CATEGORY]-[NUMBER]`:
 
----
+| Category | Controls | Focus |
+|----------|----------|-------|
+| FB-IAM | 13 controls | Legacy roles, SA keys, external access |
+| FB-RULES | 10 controls | Firestore, RTDB, Storage security rules |
+| FB-PUB | 5 controls | Public exposure |
+| FB-AUTH | 4 controls | Firebase Auth configuration |
+| FB-LOG | 2 controls | Audit trail |
 
-## Customization
-
-### Skip a phase
-Tell Claude: `"Skip phase 4e and continue"`
-
-### Add a custom check
-Add a new section to the relevant PHASE-N.md file following the same pattern:
-- Shell commands
-- Evaluation criteria with severity
-- Internal ID from the registry (or add new entry to `schemas/control-id-registry.md`)
-
-### Add a new service
-1. Add service check to PHASE-1.md services list
-2. Add service → role mapping to PHASE-2.md
-3. Add scan commands to the appropriate PHASE-4x.md
-4. Add control IDs to `schemas/control-id-registry.md`
+Full registry: `schemas/control-id-registry.md`
 
 ---
 
@@ -199,41 +154,38 @@ Add a new section to the relevant PHASE-N.md file following the same pattern:
 
 - `gcloud` CLI installed and authenticated
 - Claude Code installed: `npm install -g @anthropic-ai/claude-code`
-- For org-level checks: your personal gcloud auth needs org viewer access
-- For project checks: the scanner SA with granted roles (generated by Phase 2)
+- Current gcloud user needs sufficient permissions to read IAM policies and Firebase config
+  (typically `roles/viewer` + `roles/iam.securityReviewer` on the project)
 
 ---
 
 ## Security Notes
 
-- The scanner SA is **read-only** — it cannot modify any resources
-- Use **service account impersonation** (keyless) by default:
-  ```bash
-  gcloud config set auth/impersonate_service_account gcp-doc-scanner@PROJECT.iam.gserviceaccount.com
-  ```
-- If a legacy key file is used temporarily, keep it in `.gitignore` and delete it immediately after use:
-  ```bash
-  rm ./gcp-scanner-key.json
-  ```
-- Delete the scanner SA after the scan is complete:
-  ```bash
-  gcloud iam service-accounts delete gcp-doc-scanner@PROJECT.iam.gserviceaccount.com
-  ```
-- Scan output may contain sensitive resource names and config details — treat as confidential
+- This agent is **read-only** -- it does not modify any resources or IAM policies
+- Scan output may contain sensitive resource names and config details -- treat as confidential
+- The REVIEW GATE ensures a human reviews all findings before remediation docs are finalized
+- Remediation commands in the output are provided for reference -- run them manually after review
 
 ---
 
-## Framework Alignment Summary
+## Customization
 
-| Control Area | NIST CSF 2.0 | CIS GCP v2.x Section |
-|-------------|-------------|---------------------|
-| IAM & Identity | PR.AC, GV | Section 1 |
-| Logging & Monitoring | DE.CM | Section 2 |
-| Networking | PR.AC, PR.PT | Section 3 |
-| Compute | PR.PT, PR.IP | Section 4 |
-| Storage | PR.DS | Section 5 |
-| BigQuery / Databases | PR.DS | Section 6 |
-| Container Registry | PR.DS, ID.SC | Section 7 |
-| Supply Chain | ID.SC, PR.IP | N/A (Google blueprint) |
-| Incident Response | RS, RC | N/A |
-| Governance | GV | N/A |
+### Skip a phase
+Tell Claude: `"Skip phase 3 and continue"`
+
+### Add a custom check
+Add a new section to the relevant PHASE-N.md following the same pattern:
+- Shell commands
+- Evaluation criteria with severity
+- Internal ID from the registry (or add a new entry to `schemas/control-id-registry.md`)
+
+---
+
+## Recommended Scan Cadence
+
+| Scan Type | Phases | Frequency |
+|-----------|--------|-----------|
+| IAM pulse | 2 | Weekly |
+| Full posture | All | Monthly |
+| Post-change | Relevant phase | After IAM or rules changes |
+| Pre-audit | All | Before compliance reviews |

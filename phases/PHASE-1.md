@@ -1,84 +1,75 @@
-# Phase 1 — Service Discovery
+# Phase 1 -- Firebase Discovery
 
-**NIST Function**: IDENTIFY (ID.AM — Asset Management)
-**CIS Controls**: Prerequisite to all
-**Depends on**: Standard gcloud auth (no scanner SA needed yet)
-**Permissions needed**: `serviceusage.services.list` (included in roles/viewer)
+**NIST Function**: IDENTIFY (ID.AM -- Asset Management)
+**Depends on**: Current gcloud user authentication
+**Permissions needed**: `serviceusage.services.list`, `firebase.projects.get` (included in roles/viewer)
 
 ---
 
 ## Objective
 
-Discover which GCP services are enabled in this project.
-This drives Phase 2 — only request permissions for services that are actually enabled.
-Never assume. Never request excess permissions.
+Discover the Firebase project configuration: which Firebase services are enabled,
+what apps are registered, which service accounts exist (especially Firebase-created ones),
+and what data stores are in use. This drives all subsequent audit phases.
 
 ---
 
-## Step 1 — Run Service Discovery
+## Step 1 -- Verify Authentication
 
 ```bash
-PROJECT_ID="YOUR_PROJECT_ID"
+echo "=== Pre-flight Check ==="
+echo "Active account: $(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
+echo "Active project: $(gcloud config get-value project 2>/dev/null)"
+echo ""
 
-echo "=== GCP Service Discovery ==="
+# Verify project access
+gcloud projects describe $PROJECT_ID --format=json
+```
+
+If this fails, stop and instruct the user to run `gcloud auth login` and `gcloud config set project $PROJECT_ID`.
+
+---
+
+## Step 2 -- Firebase Service Discovery
+
+```bash
+echo "=== Firebase Service Discovery ==="
 echo "Project: $PROJECT_ID"
 echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ""
 
-# Full list of services to check
-SERVICES=(
-  # Compute & Network
-  "compute.googleapis.com"
-  "container.googleapis.com"
-  "run.googleapis.com"
-  "cloudfunctions.googleapis.com"
-  "appengine.googleapis.com"
-  "vpcaccess.googleapis.com"
-  "servicenetworking.googleapis.com"
-  "dns.googleapis.com"
-  "networkconnectivity.googleapis.com"
-  "iap.googleapis.com"
-  "cloudarmor.googleapis.com"
-  # Storage & Data
-  "storage.googleapis.com"
-  "sqladmin.googleapis.com"
-  "bigtable.googleapis.com"
-  "datastore.googleapis.com"
+FIREBASE_SERVICES=(
+  # Core Firebase
+  "firebase.googleapis.com"
+  "firebasehosting.googleapis.com"
+  "firebasestorage.googleapis.com"
+  "firebaseauth.googleapis.com"
+  "firebasedatabase.googleapis.com"
+  "firebaserules.googleapis.com"
+  "firebaseextensions.googleapis.com"
+  "firebaseappcheck.googleapis.com"
+  "firebaseremoteconfig.googleapis.com"
+  "fcm.googleapis.com"
+  # Data stores
   "firestore.googleapis.com"
-  "redis.googleapis.com"
-  "bigquery.googleapis.com"
-  "spanner.googleapis.com"
-  # CI/CD & Containers
-  "cloudbuild.googleapis.com"
-  "artifactregistry.googleapis.com"
-  "containeranalysis.googleapis.com"
-  "binaryauthorization.googleapis.com"
-  # Identity & Security
+  "storage.googleapis.com"
+  # Compute (Firebase-adjacent)
+  "cloudfunctions.googleapis.com"
+  "run.googleapis.com"
+  # Identity
+  "identitytoolkit.googleapis.com"
   "iam.googleapis.com"
+  "cloudresourcemanager.googleapis.com"
+  # Supporting
   "secretmanager.googleapis.com"
-  "cloudkms.googleapis.com"
-  "accesscontextmanager.googleapis.com"
-  "orgpolicy.googleapis.com"
-  "recommender.googleapis.com"
-  "securitycenter.googleapis.com"
-  # Messaging & Integration
-  "pubsub.googleapis.com"
-  "eventarc.googleapis.com"
-  "workflows.googleapis.com"
-  # Observability
   "logging.googleapis.com"
-  "monitoring.googleapis.com"
-  "cloudtrace.googleapis.com"
-  "clouddebugger.googleapis.com"
-  # Billing
-  "cloudbilling.googleapis.com"
-  "billingbudgets.googleapis.com"
+  "cloudbuild.googleapis.com"
 )
 
 ENABLED=()
 DISABLED=()
 
-for SERVICE in "${SERVICES[@]}"; do
+for SERVICE in "${FIREBASE_SERVICES[@]}"; do
   STATUS=$(gcloud services list \
     --project="$PROJECT_ID" \
     --filter="name:$SERVICE" \
@@ -86,10 +77,10 @@ for SERVICE in "${SERVICES[@]}"; do
 
   if [ "$STATUS" = "ENABLED" ]; then
     ENABLED+=("$SERVICE")
-    echo "✅ ENABLED   $SERVICE"
+    echo "ENABLED   $SERVICE"
   else
     DISABLED+=("$SERVICE")
-    echo "⬜ DISABLED  $SERVICE"
+    echo "DISABLED  $SERVICE"
   fi
 done
 
@@ -97,32 +88,104 @@ echo ""
 echo "=== Summary ==="
 echo "Enabled:  ${#ENABLED[@]}"
 echo "Disabled: ${#DISABLED[@]}"
-echo ""
-ENABLED_SERVICES_JSON=$(printf '%s\n' "${ENABLED[@]}" | jq -R . | jq -s .)
-echo "Enabled services JSON: $ENABLED_SERVICES_JSON"
 ```
 
 ---
 
-## Step 2 — Write Phase State
+## Step 3 -- Firebase App Registration
 
-After running the discovery, write `scan-output/phases/phase-1-state.json`:
+```bash
+echo "=== Firebase Apps ==="
+
+# Android apps
+gcloud firebase android apps list --project=$PROJECT_ID --format=json 2>/dev/null || echo "No Android apps or firebase CLI unavailable"
+
+# iOS apps
+gcloud firebase ios apps list --project=$PROJECT_ID --format=json 2>/dev/null || echo "No iOS apps or firebase CLI unavailable"
+
+# Web apps
+gcloud firebase web apps list --project=$PROJECT_ID --format=json 2>/dev/null || echo "No Web apps or firebase CLI unavailable"
+```
+
+---
+
+## Step 4 -- Service Account Inventory
+
+```bash
+echo "=== Service Account Inventory ==="
+
+# List all service accounts
+gcloud iam service-accounts list --project=$PROJECT_ID --format=json
+
+# Highlight Firebase-related SAs:
+# - firebase-adminsdk-xxxxx@PROJECT_ID.iam.gserviceaccount.com  (Firebase Admin SDK)
+# - PROJECT_ID@appspot.gserviceaccount.com                      (App Engine default / Firebase)
+# - PROJECT_NUMBER@cloudservices.gserviceaccount.com             (Google APIs SA)
+# - PROJECT_ID@gcf-admin-robot.iam.gserviceaccount.com           (Cloud Functions)
+# - service-PROJECT_NUMBER@gcf-admin-robot.iam.gserviceaccount.com
+# - service-PROJECT_NUMBER@firebase-rules.iam.gserviceaccount.com
+# - service-PROJECT_NUMBER@gcp-sa-firebasestorage.iam.gserviceaccount.com
+
+gcloud iam service-accounts list --project=$PROJECT_ID --format=json | \
+  jq '[.[] | select(.email | test("firebase|appspot|gcf-admin|cloudservices|cloudbuild"))] |
+  {firebase_related_sas: [.[].email], total_sas: length}'
+```
+
+---
+
+## Step 5 -- Data Store Discovery
+
+```bash
+echo "=== Firestore Databases ==="
+gcloud firestore databases list --project=$PROJECT_ID --format=json 2>/dev/null || echo "No Firestore databases found"
+
+echo ""
+echo "=== Storage Buckets ==="
+# Firebase creates specific buckets:
+# - PROJECT_ID.appspot.com          (default Firebase Storage)
+# - PROJECT_ID.firebaseapp.com      (Firebase Hosting)
+# - staging.PROJECT_ID.appspot.com
+# - us.artifacts.PROJECT_ID.appspot.com  (Container Registry)
+gcloud storage buckets list --project=$PROJECT_ID --format=json 2>/dev/null || echo "No buckets found"
+
+echo ""
+echo "=== Realtime Database Instances ==="
+ACCESS_TOKEN=$(gcloud auth print-access-token)
+curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://firebasedatabase.googleapis.com/v1beta/projects/$PROJECT_ID/locations/-/instances" 2>/dev/null | jq . || echo "No RTDB instances or API not enabled"
+```
+
+---
+
+## Step 6 -- Write Phase State
+
+After running discovery, write `scan-output/phases/phase-1-state.json`:
 
 ```json
 {
   "phase": "1",
   "timestamp": "<ISO8601>",
   "project_id": "<PROJECT_ID>",
-  "enabled_services": [
-    "compute.googleapis.com",
-    "run.googleapis.com"
+  "status": "COMPLETE",
+  "enabled_services": ["firebase.googleapis.com", "..."],
+  "disabled_services": ["..."],
+  "firebase_services": ["firebase.googleapis.com", "..."],
+  "firebase_apps": [
+    {"platform": "android", "app_id": "...", "display_name": "..."}
   ],
-  "disabled_services": [
-    "container.googleapis.com"
+  "service_accounts": [
+    {"email": "...", "firebase_related": true}
   ],
+  "data_stores": {
+    "firestore_databases": [],
+    "rtdb_instances": [],
+    "storage_buckets": []
+  },
   "summary": {
     "enabled_count": 0,
-    "disabled_count": 0
+    "disabled_count": 0,
+    "firebase_sa_count": 0,
+    "total_sa_count": 0
   }
 }
 ```
@@ -131,7 +194,7 @@ After running the discovery, write `scan-output/phases/phase-1-state.json`:
 
 ## Output
 
-- `scan-output/phases/phase-1-human.md` — readable service inventory
-- `scan-output/phases/phase-1-state.json` — machine-readable for Phase 2 consumption
+- `scan-output/phases/phase-1-human.md` -- readable Firebase service inventory
+- `scan-output/phases/phase-1-state.json` -- machine-readable for subsequent phases
 
 **No findings generated in this phase. Output is purely informational.**

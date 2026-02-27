@@ -1,759 +1,197 @@
-# Phase 4a — Infrastructure Scan
+# Phase 4 -- Public Exposure & Resource Audit
 
-**NIST Function**: IDENTIFY + PROTECT
-**CIS Controls**: Section 4 (VM), Section 3 (Logging), Section 2 (Networking)
-**Depends on**: Phase 3 status READY or PARTIAL
+**NIST Function**: PROTECT (PR.AC, PR.DS) + DETECT (DE.CM)
+**Depends on**: `scan-output/phases/phase-1-state.json`
+**Permissions needed**: `storage.buckets.getIamPolicy`, `cloudfunctions.functions.getIamPolicy`, `logging.logEntries.list`
 
 ---
 
-## Compute Instances
+## Objective
+
+Identify publicly accessible resources, check Firebase Auth configuration, verify
+App Check enforcement, and review recent audit logs for suspicious IAM activity.
+
+---
+
+## Step 1 -- allUsers/allAuthenticatedUsers in Project IAM
 
 ```bash
-# Full instance inventory
-gcloud compute instances list --format=json
-
-# Per instance: detailed config
-gcloud compute instances list --format="csv[no-heading](name,zone)" | \
-while IFS=, read -r NAME ZONE; do
-  gcloud compute instances describe "$NAME" --zone="$ZONE" --format=json
-done
-
-# Shielded VM status
-gcloud compute instances list --format=json | \
-  jq '[.[] | {name, shieldedInstanceConfig, shieldedInstanceIntegrityPolicy}]'
-
-# Project-wide SSH keys (should be blocked per instance)
-gcloud compute project-info describe --format=json | jq '.commonInstanceMetadata'
-
-# OS Login status
-gcloud compute project-info describe --format=json | \
-  jq '.commonInstanceMetadata.items[] | select(.key == "enable-oslogin")'
-```
-
-**Flag as CRITICAL:**
-- Instance with external IP + firewall rule allowing 0.0.0.0/0 on port 22 or 3389
-- Project-wide SSH keys not blocked
-
-**Flag as HIGH:**
-- Shielded VM not enabled on prod instances
-- OS Login not enforced
-
----
-
-## Disks
-
-```bash
-gcloud compute disks list --format=json
-# Check encryption: GOOGLE_MANAGED vs CUSTOMER_MANAGED vs CUSTOMER_SUPPLIED
-gcloud compute disks list --format=json | \
-  jq '[.[] | {name, sizeGb, type, status, diskEncryptionKey, users}]'
-```
-
----
-
-## VPCs, Subnets & Firewall Rules
-
-```bash
-# Networks
-gcloud compute networks list --format=json
-
-# Subnets — check Private Google Access and Flow Logs
-gcloud compute networks subnets list --format=json | \
-  jq '[.[] | {name, region, ipCidrRange, privateIpGoogleAccess,
-  enableFlowLogs, logConfig}]'
-
-# Firewall rules — full detail
-gcloud compute firewall-rules list --format=json
-
-# Rules allowing from 0.0.0.0/0 (internet-open)
-gcloud compute firewall-rules list --format=json | \
-  jq '[.[] | select(.sourceRanges[] == "0.0.0.0/0" or .sourceRanges[] == "::/0")]'
-
-# Firewall Insights recommendations
-gcloud recommender recommendations list \
-  --recommender=google.compute.firewall.Recommender \
-  --project=$PROJECT_ID \
-  --location=global \
-  --format=json
-
-# Routes
-gcloud compute routes list --format=json
-
-# Cloud NAT
-gcloud compute routers list --format=json
-gcloud compute routers list --format="csv[no-heading](name,region)" | \
-while IFS=, read -r NAME REGION; do
-  gcloud compute routers get-nat-mapping-info "$NAME" --region="$REGION" --format=json 2>/dev/null
-done
-```
-
-**Flag as CRITICAL:**
-- Firewall rule: direction=INGRESS, source=0.0.0.0/0, port=22 (SSH)
-- Firewall rule: direction=INGRESS, source=0.0.0.0/0, port=3389 (RDP)
-- Default VPC network still exists
-
-**Flag as HIGH:**
-- Firewall rule: direction=INGRESS, source=0.0.0.0/0, port=any (allow all)
-- Subnet with no VPC Flow Logs in prod
-- Firewall Insights flags rule as "overly permissive" or "0 hits in 90 days"
-
----
-
-## Cloud Armor & Load Balancers
-
-```bash
-# External load balancers
-gcloud compute forwarding-rules list --format=json | \
-  jq '[.[] | select(.loadBalancingScheme == "EXTERNAL")]'
-
-# Cloud Armor security policies
-gcloud compute security-policies list --format=json
-gcloud compute security-policies describe POLICY_NAME --format=json
-
-# IAP-protected resources
-gcloud iap settings get --project=$PROJECT_ID --format=json 2>/dev/null
-```
-
----
-
-## Diagrams to Generate
-
-**network-topology.md:**
-```mermaid
-graph TD
-  subgraph VPC: <name>
-    SN1[Subnet: <name>\n<cidr>\nFlow Logs: ON/OFF]
-    SN2[Subnet: <name>\n<cidr>]
-  end
-  VM1[<instance>\n<external-ip> / <internal-ip>] --> SN1
-  INTERNET -->|fw: allow-ssh\n0.0.0.0/0:22 ⚠️| VM1
-  SN1 -->|NAT Gateway| INTERNET
-```
-
----
-
-## Output
-
-- `scan-output/phases/phase-4a-human.md`
-- `scan-output/phases/phase-4a-state.json`
-- `scan-output/docs/01-compute-network.md`
-- `scan-output/diagrams/network-topology.md`
-
----
----
-
-# Phase 4b — Identity & Access Scan
-
-**NIST Function**: PROTECT (PR.AC — Identity Management)
-**CIS Controls**: Section 1 (IAM)
-**Depends on**: Phase 3 READY or PARTIAL
-
----
-
-## Service Account Full Inventory
-
-```bash
-# All service accounts
-gcloud iam service-accounts list --format=json
-
-# Per SA: keys and metadata
-gcloud iam service-accounts list --format="value(email)" | \
-while IFS= read -r SA; do
-  echo "=== SA: $SA ==="
-  gcloud iam service-accounts describe "$SA" --format=json
-  gcloud iam service-accounts keys list --iam-account="$SA" --format=json
-done
-
-# Project-level IAM bindings
-gcloud projects get-iam-policy $PROJECT_ID --format=json
-
-# Primitive role bindings (owner, editor — flag immediately)
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
-  jq '[.bindings[] | select(.role | test("roles/owner|roles/editor"))]'
-
-# External members (non-corp domain)
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
-  jq '[.bindings[] | select(.members[] | test("gmail.com|yahoo.com|hotmail.com"))]'
-
-# allUsers / allAuthenticatedUsers bindings
+echo "=== Public Bindings in Project IAM ==="
 gcloud projects get-iam-policy $PROJECT_ID --format=json | \
   jq '[.bindings[] | select(.members[] | test("allUsers|allAuthenticatedUsers"))]'
-
-# Cross-project SA access (SAs from other projects with bindings here)
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
-  jq '[.bindings[].members[] | select(startswith("serviceAccount:") and
-  (contains("'$PROJECT_ID'") | not))]'
-
-# SA impersonation bindings
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
-  jq '[.bindings[] | select(.role | test("iam.serviceAccountUser|iam.serviceAccountTokenCreator"))]'
 ```
 
 ---
 
-## SA Last-Used via Audit Logs
+## Step 2 -- Firebase Storage Bucket Public Access
 
 ```bash
-# Last authentication per SA (batch — all project SAs, last 90 days)
-gcloud logging read \
-  'protoPayload.authenticationInfo.principalEmail=~"@'$PROJECT_ID'.iam.gserviceaccount.com"
-   AND protoPayload.@type="type.googleapis.com/google.cloud.audit.AuditLog"
-   AND severity!="DEBUG"' \
-  --project=$PROJECT_ID \
-  --limit=500 \
-  --format=json \
-  --freshness=90d | \
-  jq 'group_by(.protoPayload.authenticationInfo.principalEmail) |
-      map({sa: .[0].protoPayload.authenticationInfo.principalEmail,
-           last_seen: (map(.timestamp) | max),
-           event_count: length})'
-```
+echo "=== Storage Bucket Security ==="
 
----
-
-## SA Key Age Analysis
-
-For each SA key found, calculate:
-- `key_age_days` = today - key creation date
-- Flag if key_age_days > 90 (HIGH)
-- Flag if key_age_days > 365 (CRITICAL)
-- Flag if key type is USER_MANAGED (SYSTEM_MANAGED keys auto-rotate)
-
----
-
-## IAM Recommender
-
-```bash
-gcloud recommender recommendations list \
-  --recommender=google.iam.policy.Recommender \
-  --project=$PROJECT_ID \
-  --location=global \
-  --format=json | \
-  jq '[.[] | {name, description, stateInfo, primaryImpact, content}]'
-```
-
----
-
-## Workload Identity Federation Status
-
-```bash
-# Check if WIF pools exist (preferred over SA keys for external workloads)
-gcloud iam workload-identity-pools list \
-  --location=global \
-  --project=$PROJECT_ID \
-  --format=json 2>/dev/null
-
-# GitHub Actions → GCP (keyless auth configured?)
-gcloud iam workload-identity-pools providers list \
-  --workload-identity-pool=POOL_ID \
-  --location=global \
-  --project=$PROJECT_ID \
-  --format=json 2>/dev/null
-```
-
-**Flag as CRITICAL:**
-- `roles/editor` or `roles/owner` bound to any SA or user
-- `allUsers` or `allAuthenticatedUsers` in any project binding
-- External user (gmail.com) with any role
-- SA key age > 365 days
-
-**Flag as HIGH:**
-- SA unused for 90+ days but has active user-managed keys
-- Cloud Build default SA has `roles/editor` (extremely common and critical)
-- SA key age > 90 days
-- No Workload Identity Federation when GitHub Actions / external CI is used
-- IAM Recommender flags unused permissions
-
----
-
-## Output
-
-- `scan-output/phases/phase-4b-human.md`
-- `scan-output/phases/phase-4b-state.json`
-- `scan-output/docs/06-service-accounts.md`
-- `scan-output/audit/sa-last-used-report.md`
-- `scan-output/audit/sa-key-age-report.md`
-- `scan-output/audit/orphaned-sa-report.md`
-- `scan-output/audit/sa-key-elimination-roadmap.md`
-- `scan-output/diagrams/service-account-map.md`
-- `scan-output/diagrams/sa-risk-matrix.md`
-
----
----
-
-# Phase 4c — Data & Secrets Scan
-
-**NIST Function**: PROTECT (PR.DS — Data Security)
-**CIS Controls**: Section 5 (Storage), Section 6 (BigQuery)
-**Depends on**: Phase 3 READY or PARTIAL
-
----
-
-## Cloud Storage
-
-```bash
-# All buckets
-gcloud storage buckets list --format=json
-
-# Per bucket: full security config
-gcloud storage buckets list --format="value(name)" | \
+gcloud storage buckets list --project=$PROJECT_ID --format="value(name)" | \
 while IFS= read -r BUCKET; do
   echo "=== Bucket: $BUCKET ==="
-  gcloud storage buckets describe "gs://$BUCKET" --format=json
-  gcloud storage buckets get-iam-policy "gs://$BUCKET" --format=json
-done
 
-# Public access prevention status
-gcloud storage buckets list --format=json | \
-  jq '[.[] | {name, publicAccessPrevention: .iamConfiguration.publicAccessPrevention,
-  uniformBucketLevelAccess: .iamConfiguration.uniformBucketLevelAccess.enabled,
-  versioning: .versioning.enabled,
-  encryption: .encryption,
-  retentionPolicy: .retentionPolicy}]'
-```
+  # Check IAM for public access
+  PUBLIC=$(gcloud storage buckets get-iam-policy "gs://$BUCKET" --format=json 2>/dev/null | \
+    jq '[.bindings[] | select(.members[] | test("allUsers|allAuthenticatedUsers"))]' 2>/dev/null)
+  if [ "$PUBLIC" != "[]" ] && [ -n "$PUBLIC" ] && [ "$PUBLIC" != "null" ]; then
+    echo "PUBLIC ACCESS DETECTED: $BUCKET"
+    echo "$PUBLIC"
+  fi
 
-**Flag as CRITICAL:**
-- Bucket with `allUsers` or `allAuthenticatedUsers` IAM binding
-- Bucket with public access prevention = `inherited` (not enforced) + public binding
-
-**Flag as HIGH:**
-- `uniformBucketLevelAccess` = false (using legacy ACLs)
-- No versioning on buckets containing critical data
-- No CMEK on buckets labeled as confidential/restricted
-
----
-
-## Secret Manager
-
-```bash
-# Secrets inventory (metadata only — never access values)
-gcloud secrets list --format=json
-
-# Per secret: access policy and rotation
-gcloud secrets list --format="value(name)" | \
-while IFS= read -r SECRET; do
-  echo "=== Secret: $SECRET ==="
-  gcloud secrets describe "$SECRET" --format=json
-  gcloud secrets get-iam-policy "$SECRET" --format=json
-done
-
-# Secrets without rotation configured
-gcloud secrets list --format=json | \
-  jq '[.[] | select(.rotation == null) | {name, createTime, replication}]'
-```
-
----
-
-## Cloud KMS
-
-```bash
-# Key rings
-gcloud kms keyrings list --location=global --format=json
-gcloud kms locations list --format="value(locationId)" | \
-while IFS= read -r LOCATION; do
-  gcloud kms keyrings list --location="$LOCATION" --format=json 2>/dev/null
-done
-
-# Keys per keyring
-gcloud kms keys list --keyring=KEYRING --location=LOCATION --format=json
-
-# Key rotation period (should be <= 365 days)
-gcloud kms keys list --keyring=KEYRING --location=LOCATION --format=json | \
-  jq '[.[] | {name, purpose, rotationPeriod, nextRotationTime,
-  primaryState: .primary.state}]'
-```
-
-**Flag as HIGH:**
-- KMS key rotation period > 365 days or no rotation configured
-- KMS Admin and KMS CryptoKey Encrypter/Decrypter roles on same principal (SoD violation)
-
----
-
-## Cloud SQL
-
-```bash
-# SQL instances
-gcloud sql instances list --format=json
-
-# Per instance: security config
-gcloud sql instances list --format="value(name)" | \
-while IFS= read -r INSTANCE; do
-  gcloud sql instances describe "$INSTANCE" --format=json | \
-    jq '{name, databaseVersion, settings: {
-      ipConfiguration: .settings.ipConfiguration,
-      backupConfiguration: .settings.backupConfiguration,
-      databaseFlags: .settings.databaseFlags,
-      maintenanceWindow: .settings.maintenanceWindow}}'
+  # Check bucket configuration
+  gcloud storage buckets describe "gs://$BUCKET" --format=json 2>/dev/null | \
+    jq '{name: .name,
+         publicAccessPrevention: .iamConfiguration.publicAccessPrevention,
+         uniformBucketLevelAccess: .iamConfiguration.uniformBucketLevelAccess.enabled,
+         location: .location}'
 done
 ```
 
-**Flag as CRITICAL:**
-- SQL instance with public IP + authorized network `0.0.0.0/0`
-- SSL not required on SQL instance
-
-**Flag as HIGH:**
-- Automated backups not enabled
-- No point-in-time recovery
-- SQL instance with public IP (even with restricted authorized networks)
-
 ---
 
-## Data Classification Check
+## Step 3 -- Cloud Functions Public Invocation
 
 ```bash
-# Check bucket labels for classification tags
-gcloud storage buckets list --format=json | \
-  jq '[.[] | {name, labels}]'
+echo "=== Cloud Functions Security ==="
 
-# Check project labels
-gcloud projects describe $PROJECT_ID --format=json | jq '.labels'
-```
+# Cloud Functions v1 (often used as Firebase Functions)
+gcloud functions list --project=$PROJECT_ID --format=json 2>/dev/null
 
----
-
-## Output
-
-- `scan-output/phases/phase-4c-human.md`
-- `scan-output/phases/phase-4c-state.json`
-- `scan-output/docs/02-storage.md`
-- `scan-output/audit/data-classification.md`
-- `scan-output/audit/data-exposure-findings.md`
-- `scan-output/audit/backup-dr-readiness.md`
-
----
----
-
-# Phase 4d — Containers & Supply Chain Scan
-
-**NIST Function**: PROTECT (PR.IP — Information Protection)
-**CIS Controls**: Section 7 (Container Registry)
-**Depends on**: Phase 3 READY or PARTIAL
-
----
-
-## Cloud Run
-
-```bash
-# All services
-gcloud run services list --platform=managed --format=json
-
-# Per service: full config
-gcloud run services list --platform=managed --format="csv[no-heading](metadata.name,metadata.namespace)" | \
-while IFS=, read -r NAME REGION; do
-  gcloud run services describe "$NAME" \
-    --platform=managed \
-    --region="$REGION" \
-    --format=json
+# Check each function for public invoker
+gcloud functions list --project=$PROJECT_ID --format="value(name,region)" 2>/dev/null | \
+while IFS=$'\t' read -r NAME REGION; do
+  if [ -n "$NAME" ]; then
+    POLICY=$(gcloud functions get-iam-policy "$NAME" \
+      --region="$REGION" --format=json 2>/dev/null)
+    PUBLIC=$(echo "$POLICY" | \
+      jq '[.bindings[] | select(.members[] | test("allUsers|allAuthenticatedUsers")) |
+      select(.role | test("invoker"))]' 2>/dev/null)
+    if [ "$PUBLIC" != "[]" ] && [ -n "$PUBLIC" ] && [ "$PUBLIC" != "null" ]; then
+      echo "PUBLIC FUNCTION: $NAME ($REGION)"
+      echo "$PUBLIC"
+    fi
+  fi
 done
 
-# Services with public ingress (all traffic = internet-facing)
-gcloud run services list --platform=managed --format=json | \
-  jq '[.[] | select(.metadata.annotations["run.googleapis.com/ingress"] == "all") |
-  {name, region, url: .status.url, ingress: .metadata.annotations["run.googleapis.com/ingress"],
-  serviceAccount: .spec.template.spec.serviceAccountName}]'
-
-# VPC connector usage (private connectivity)
-gcloud run services list --platform=managed --format=json | \
-  jq '[.[] | select(.spec.template.metadata.annotations["run.googleapis.com/vpc-access-connector"] != null)]'
+# Cloud Functions v2 (Cloud Run backed)
+gcloud functions list --gen2 --project=$PROJECT_ID --format=json 2>/dev/null || true
 ```
 
 ---
 
-## Artifact Registry
+## Step 4 -- Firebase Hosting
 
 ```bash
-# Repositories
-gcloud artifacts repositories list --format=json
+echo "=== Firebase Hosting ==="
 
-# Images per Docker repo (with vulnerability data)
-gcloud artifacts repositories list \
-  --filter="format=DOCKER" \
-  --format="value(name)" | \
-while IFS= read -r REPO; do
-  echo "=== Repo: $REPO ==="
-  gcloud artifacts docker images list "$REPO" \
-    --show-occurrences \
-    --format=json 2>/dev/null | head -50
-done
+ACCESS_TOKEN=$(gcloud auth print-access-token)
 
-# Critical/High CVEs in currently deployed images
-# Cross-reference: Cloud Run image tags vs AR vulnerability findings
+# List Firebase Hosting sites
+curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://firebasehosting.googleapis.com/v1beta1/projects/$PROJECT_ID/sites" | jq . 2>/dev/null
+
+# Hosting sites expose which Functions/Cloud Run services are publicly routable
+# via rewrites. Document each hosting site and its rewrite targets.
 ```
 
 ---
 
-## Cloud Build
+## Step 5 -- Firebase Auth Configuration
 
 ```bash
-# Triggers
-gcloud builds triggers list --format=json
+echo "=== Firebase Auth Configuration ==="
 
-# Recent builds (last 20)
-gcloud builds list --limit=20 --format=json
+ACCESS_TOKEN=$(gcloud auth print-access-token)
 
-# Cloud Build SA roles (CRITICAL CHECK)
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
-  jq '[.bindings[] | select(.members[] | contains("cloudbuild.gserviceaccount.com"))]'
+# Identity Toolkit (Firebase Auth) config
+AUTH_CONFIG=$(curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/config" 2>/dev/null)
 
-# Approval gates on triggers
-gcloud builds triggers list --format=json | \
-  jq '[.[] | {name, approvalConfig, serviceAccount}]'
+echo "$AUTH_CONFIG" | jq . 2>/dev/null || echo "Firebase Auth not configured or API not enabled"
 
-# Substitution variables (may reveal config patterns — not values)
-gcloud builds triggers list --format=json | \
-  jq '[.[] | {name, substitutions: (.substitutions // {})}]'
+# Extract key security settings:
+# - Sign-in providers enabled
+# - Email enumeration protection
+# - MFA configuration
+# - Authorized domains
+echo "--- Sign-in Providers ---"
+echo "$AUTH_CONFIG" | jq '.signIn' 2>/dev/null
+
+echo "--- Authorized Domains ---"
+echo "$AUTH_CONFIG" | jq '.authorizedDomains' 2>/dev/null
+
+echo "--- MFA Config ---"
+echo "$AUTH_CONFIG" | jq '.mfa' 2>/dev/null
 ```
-
-**Flag as CRITICAL:**
-- Cloud Build default SA (`@cloudbuild.gserviceaccount.com`) has `roles/editor`
-- No approval gate on triggers that deploy to production
 
 ---
 
-## Binary Authorization
+## Step 6 -- Firebase App Check
 
 ```bash
-# Policy
-gcloud container binauthz policy export --format=json 2>/dev/null
+echo "=== Firebase App Check ==="
 
-# Is policy in ENFORCE mode or DRY_RUN?
-# Are attestors configured?
-gcloud container binauthz attestors list --format=json 2>/dev/null
-```
+ACCESS_TOKEN=$(gcloud auth print-access-token)
 
-**Flag as HIGH:**
-- BinAuthz not enabled or in DRY_RUN only mode for prod deployments
-- No attestation required for Cloud Run deployments
-
----
-
-## Diagrams to Generate
-
-**cicd-pipeline.md:**
-```mermaid
-flowchart LR
-  GH[Source Repo] -->|push trigger| CB[Cloud Build\n<trigger-name>]
-  CB -->|docker push| AR[Artifact Registry\n<repo>/<image>]
-  AR -->|CVE scan| VS{Vuln Scan\nPASS/FAIL}
-  VS -->|PASS| BA[BinAuthz\nAttestation]
-  BA -->|deploy| CR[Cloud Run\n<service>]
-  CR -->|SA: <email>| SEC[Secrets/Storage]
+# Check if App Check is configured
+curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://firebaseappcheck.googleapis.com/v1/projects/$PROJECT_ID/apps" | jq . 2>/dev/null || \
+  echo "App Check not configured or API not enabled"
 ```
 
 ---
 
-## Output
-
-- `scan-output/phases/phase-4d-human.md`
-- `scan-output/phases/phase-4d-state.json`
-- `scan-output/docs/03-cloud-run.md`
-- `scan-output/docs/04-artifact-registry.md`
-- `scan-output/docs/05-cloud-build.md`
-- `scan-output/diagrams/cicd-pipeline.md`
-
----
----
-
-# Phase 4e — Runtime Signals Scan
-
-**NIST Function**: DETECT (DE.CM — Monitoring)
-**CIS Controls**: Section 2 (Logging)
-**Depends on**: Phase 3 READY or PARTIAL
-
----
-
-## Security Command Center
+## Step 7 -- Audit Log Review
 
 ```bash
-# Active threat findings (not misconfigs — actual threats)
-gcloud scc findings list projects/$PROJECT_ID \
-  --filter="state=\"ACTIVE\" AND category=\"THREAT\"" \
-  --format=json 2>/dev/null
+echo "=== Recent IAM Changes (last 30 days) ==="
 
-# All active HIGH/CRITICAL findings
-gcloud scc findings list projects/$PROJECT_ID \
-  --filter="state=\"ACTIVE\" AND severity=\"CRITICAL\" OR severity=\"HIGH\"" \
-  --format=json 2>/dev/null
+# IAM policy changes
+gcloud logging read \
+  'protoPayload.methodName="SetIamPolicy" AND resource.type="project"' \
+  --project=$PROJECT_ID \
+  --freshness=30d \
+  --limit=50 \
+  --format=json 2>/dev/null | \
+  jq '[.[] | {timestamp, who: .protoPayload.authenticationInfo.principalEmail,
+  resource: .resource.type}]' 2>/dev/null || echo "Could not read audit logs"
 
-# Mute rules — check for rules hiding findings (potential audit evasion)
-gcloud scc muteconfigs list \
-  --parent=projects/$PROJECT_ID \
-  --format=json 2>/dev/null
+echo ""
+echo "=== SA Key Creation Events (last 30 days) ==="
 
-# SCC sources enabled
-gcloud scc sources list \
-  --organization=$ORG_ID \
-  --format=json 2>/dev/null
-```
-
-**Flag as CRITICAL:**
-- Any active THREAT-category SCC finding
-- Mute rules that suppress CRITICAL/HIGH findings without documented justification
-
----
-
-## Cost Anomaly Signals
-
-```bash
-# Budget alerts configured?
-gcloud billing budgets list \
-  --billing-account=$BILLING_ACCOUNT_ID \
-  --format=json 2>/dev/null
-
-# Recent billing data (look for spikes)
-# Note: detailed cost data requires billing export to BigQuery
-```
-
-**Flag as MEDIUM:**
-- No budget alerts configured (cannot detect cryptomining/exfil via cost spike)
-
----
-
-## Unusual Activity in Audit Logs
-
-```bash
-# SA key creation events (last 30 days)
 gcloud logging read \
   'protoPayload.methodName="google.iam.admin.v1.CreateServiceAccountKey"' \
   --project=$PROJECT_ID \
   --freshness=30d \
-  --format=json | \
+  --format=json 2>/dev/null | \
   jq '[.[] | {timestamp, who: .protoPayload.authenticationInfo.principalEmail,
-  what: .protoPayload.request.serviceAccount}]'
-
-# IAM policy change events
-gcloud logging read \
-  'protoPayload.methodName="SetIamPolicy"' \
-  --project=$PROJECT_ID \
-  --freshness=30d \
-  --format=json | \
-  jq '[.[] | {timestamp, who: .protoPayload.authenticationInfo.principalEmail,
-  resource: .resource}]' | head -50
-
-# Public bucket creation events
-gcloud logging read \
-  'protoPayload.methodName="storage.setIamPermissions"
-   AND protoPayload.serviceData.policyDelta.bindingDeltas.member="allUsers"' \
-  --project=$PROJECT_ID \
-  --freshness=30d \
-  --format=json 2>/dev/null
-
-# Firewall rule changes
-gcloud logging read \
-  'protoPayload.methodName=~"compute.firewalls"' \
-  --project=$PROJECT_ID \
-  --freshness=30d \
-  --format=json | head -20
+  sa: .protoPayload.request.name}]' 2>/dev/null || echo "Could not read audit logs"
 ```
+
+---
+
+## Evaluation Criteria
+
+| Finding | Severity | Internal ID |
+|---------|----------|-------------|
+| allUsers/allAuthenticatedUsers in project IAM | CRITICAL | FB-PUB-01 |
+| Firebase Storage bucket publicly accessible | CRITICAL | FB-PUB-02 |
+| Firebase Storage bucket uses legacy ACLs (not uniform) | HIGH | FB-PUB-03 |
+| Firebase Storage bucket public access prevention not enforced | HIGH | FB-PUB-04 |
+| Cloud Function has allUsers invoker | HIGH | FB-PUB-05 |
+| Firebase Auth email enumeration not protected | MEDIUM | FB-AUTH-01 |
+| Firebase Auth no MFA configured | MEDIUM | FB-AUTH-02 |
+| Firebase App Check not configured | MEDIUM | FB-AUTH-03 |
+| No authorized domain restrictions in Firebase Auth | HIGH | FB-AUTH-04 |
+| Recent IAM policy change granting legacy roles | HIGH | FB-LOG-01 |
+| Recent SA key creation event | HIGH | FB-LOG-02 |
 
 ---
 
 ## Output
 
-- `scan-output/phases/phase-4e-human.md`
-- `scan-output/phases/phase-4e-state.json`
-- `scan-output/audit/cost-anomaly-signals.md`
-
----
----
-
-# Phase 4f — Detection & Response Readiness Scan
-
-**NIST Function**: DETECT + RESPOND + RECOVER
-**CIS Controls**: Section 2 (Logging), Section 3 (Monitoring)
-**Depends on**: Phase 3 READY or PARTIAL
-
----
-
-## Log Sinks (Export)
-
-```bash
-# Project-level sinks
-gcloud logging sinks list --project=$PROJECT_ID --format=json
-
-# Are logs exported to SIEM / long-term storage?
-# Check for: bigquery, pubsub, storage destination types
-gcloud logging sinks list --project=$PROJECT_ID --format=json | \
-  jq '[.[] | {name, destination, filter, disabled}]'
-
-# Org-level sinks
-gcloud logging sinks list --organization=$ORG_ID --format=json 2>/dev/null
-```
-
-**Flag as HIGH:**
-- No log sinks configured (logs lost after 30 days, no SIEM)
-- Log sink is disabled
-
----
-
-## Alerting Policies
-
-```bash
-# Monitoring alert policies
-gcloud alpha monitoring policies list --project=$PROJECT_ID --format=json 2>/dev/null
-
-# Check for security-critical alert types:
-REQUIRED_ALERTS=(
-  "IAM policy changes"
-  "Service account key creation"
-  "Firewall rule changes"
-  "Public bucket creation"
-  "SCC high severity findings"
-  "Billing anomaly"
-)
-```
-
-**Flag as HIGH for each missing critical alert type.**
-
----
-
-## Data Access Audit Logging
-
-```bash
-# Check which services have Data Access audit logs enabled
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
-  jq '.auditConfigs'
-```
-
-**Flag as MEDIUM:**
-- Data Access audit logs not enabled for Cloud Storage, Secret Manager, KMS, BigQuery
-
----
-
-## Backup & DR Configuration
-
-```bash
-# Cloud SQL backups
-gcloud sql instances list --format=json | \
-  jq '[.[] | {name, settings: {
-    backupConfiguration: .settings.backupConfiguration,
-    availabilityType: .settings.availabilityType}}]'
-
-# GCS versioning
-gcloud storage buckets list --format=json | \
-  jq '[.[] | {name, versioning: .versioning.enabled}]'
-```
-
----
-
-## Runbook Gap Check
-
-After scanning alerting policies, cross-reference:
-For each alert type that EXISTS, check if a corresponding runbook exists in `scan-output/ir/playbooks/`.
-Output a matrix:
-
-| Alert Type | Policy Exists | Runbook Exists | Gap |
-|-----------|--------------|----------------|-----|
-| IAM policy change | ✅ | ❌ | YES |
-| SA key creation | ❌ | ❌ | YES |
-
----
-
-## Output
-
-- `scan-output/phases/phase-4f-human.md`
-- `scan-output/phases/phase-4f-state.json`
-- `scan-output/ir/plan.md` (skeleton IR plan based on findings)
-- `scan-output/ir/playbooks/iam-escalation.md`
-- `scan-output/ir/playbooks/public-exposure.md`
-- `scan-output/ir/playbooks/credential-compromise.md`
+- `scan-output/phases/phase-4-human.md` -- public exposure analysis report
+- `scan-output/phases/phase-4-state.json` -- structured findings
+- `scan-output/docs/03-public-exposure.md` -- public access findings document

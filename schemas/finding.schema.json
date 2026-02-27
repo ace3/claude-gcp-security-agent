@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "GCP Security Finding",
-  "description": "Standard schema for all findings produced by the GCP Security Excellence Agent",
+  "title": "Firebase Security Finding",
+  "description": "Standard schema for all findings produced by the Firebase Security Audit Agent",
   "type": "object",
   "required": [
     "id",
@@ -15,9 +15,7 @@
     "why_it_matters",
     "remediation_command",
     "nist_function",
-    "cis_control",
     "score",
-    "threat_model_amplified",
     "timestamp"
   ],
   "properties": {
@@ -28,47 +26,36 @@
     },
     "internal_id": {
       "type": "string",
-      "description": "Stable control ID format: GCP-[CATEGORY]-[NUMBER]",
-      "pattern": "^GCP-[A-Z]+-[0-9]+$",
+      "description": "Stable control ID format: FB-[CATEGORY]-[NUMBER]",
+      "pattern": "^FB-[A-Z]+-[0-9]+$",
       "examples": [
-        "GCP-IAM-01",
-        "GCP-NET-03",
-        "GCP-STOR-02",
-        "GCP-BUILD-01",
-        "GCP-RUN-02",
-        "GCP-KMS-01",
-        "GCP-LOG-01"
+        "FB-IAM-01",
+        "FB-RULES-03",
+        "FB-PUB-02",
+        "FB-AUTH-01",
+        "FB-LOG-01"
       ]
     },
     "phase": {
       "type": "string",
-      "enum": ["0", "0.5", "1", "2", "3", "4a", "4b", "4c", "4d", "4e", "4f", "5"],
+      "enum": ["1", "2", "3", "4", "5"],
       "description": "Phase that generated this finding"
     },
     "severity": {
       "type": "string",
       "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
-      "description": "Base severity before threat model amplification"
+      "description": "Base severity"
     },
     "score": {
       "type": "number",
-      "description": "Numeric score after threat model multiplier applied",
+      "description": "Numeric score: CRITICAL=10, HIGH=7, MEDIUM=4, LOW=1",
       "minimum": 0,
-      "maximum": 15
-    },
-    "threat_model_amplified": {
-      "type": "boolean",
-      "description": "True if this finding sits on a viable attack path from Phase 0.5"
-    },
-    "attack_path_reference": {
-      "type": "string",
-      "description": "Reference to attack path from phase-0.5-state.json (if amplified)",
-      "nullable": true
+      "maximum": 10
     },
     "title": {
       "type": "string",
       "description": "Short human-readable title",
-      "example": "Cloud Build SA has roles/editor"
+      "example": "Firebase Admin SDK SA has roles/editor"
     },
     "finding": {
       "type": "string",
@@ -83,32 +70,19 @@
       "enum": [
         "service_account",
         "iam_binding",
-        "iam",
-        "compute_instance",
-        "firewall_rule",
-        "network",
-        "subnet",
-        "disk",
-        "gcs_bucket",
-        "bigquery",
-        "bigquery_dataset",
-        "datastore",
-        "firestore",
-        "cloud_run_service",
-        "artifact_registry_repo",
-        "cloud_build_trigger",
-        "cloud_sql_instance",
-        "secret",
-        "kms_key",
-        "kms_keyring",
-        "org_policy",
-        "log_sink",
-        "alert_policy",
-        "scc_finding",
-        "workload_identity_pool",
-        "vpc_connector",
         "project",
-        "organization"
+        "firestore_database",
+        "firestore_rules",
+        "rtdb_instance",
+        "rtdb_rules",
+        "storage_bucket",
+        "storage_rules",
+        "cloud_function",
+        "firebase_hosting_site",
+        "firebase_auth_config",
+        "firebase_app",
+        "firebase_app_check",
+        "audit_log_entry"
       ]
     },
     "resource_name": {
@@ -140,15 +114,10 @@
       "example": "PR.AC-1",
       "nullable": true
     },
-    "cis_control": {
+    "firebase_best_practice": {
       "type": "string",
-      "description": "CIS GCP Benchmark v2.x control ID or N/A",
-      "example": "1.5"
-    },
-    "cis_level": {
-      "type": "string",
-      "enum": ["L1", "L2", "N/A"],
-      "description": "CIS benchmark level"
+      "description": "Reference to Firebase security best practice documentation",
+      "nullable": true
     },
     "false_positive_risk": {
       "type": "string",
