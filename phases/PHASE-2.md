@@ -100,32 +100,76 @@ Write to `scan-output/phases/grant-permissions.sh`:
 set -euo pipefail
 
 PROJECT_ID="<PROJECT_ID>"
-SA_EMAIL="gcp-doc-scanner@${PROJECT_ID}.iam.gserviceaccount.com"
+SA_NAME="gcp-doc-scanner"
+SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-echo "Creating service account..."
-gcloud iam service-accounts create gcp-doc-scanner \
+echo "=== GCP Security Scanner — Permission Grant ==="
+echo "Project:  $PROJECT_ID"
+echo "SA email: $SA_EMAIL"
+echo ""
+
+# ── Step 0: Reset impersonation so all grants run as the human account ─────────
+# A previous run may have left auth/impersonate_service_account set in gcloud
+# config. All add-iam-policy-binding calls MUST run as the human operator.
+echo "Clearing any active impersonation (grants must run as human user)..."
+gcloud config unset auth/impersonate_service_account 2>/dev/null || true
+echo "  Active account: $(gcloud config get-value account)"
+echo ""
+
+# ── Step 1: Create service account ─────────────────────────────────────────
+echo "Creating service account (skip if already exists)..."
+gcloud iam service-accounts create "$SA_NAME" \
   --display-name="GCP Security Scanner (read-only)" \
-  --project=$PROJECT_ID
+  --description="Scanner SA for security audit — read-only, keyless impersonation only" \
+  --project="$PROJECT_ID" 2>/dev/null || echo "  SA already exists, skipping create."
 
-echo "Granting roles..."
+echo ""
+
+# ── Step 2: Grant always-on roles ───────────────────────────────────────
 
 # Always-on: base metadata
-gcloud projects add-iam-policy-binding $PROJECT_ID \
+echo "Granting roles/viewer (base project metadata)..."
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/viewer"
+  --role="roles/viewer" \
+  --condition=None
 
 # Always-on: IAM visibility
-gcloud projects add-iam-policy-binding $PROJECT_ID \
+echo "Granting roles/iam.securityReviewer (IAM policy visibility)..."
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/iam.securityReviewer"
+  --role="roles/iam.securityReviewer" \
+  --condition=None
+
+echo ""
+
+# ── Step 3: Grant service-specific roles (enabled services only) ────────────
 
 # <one block per enabled service, with comment>
 
-echo "Configuring keyless impersonation..."
+# ── Step 4: Grant serviceAccountTokenCreator to the human operator ──────────
+# Required for keyless impersonation. Without this the human user cannot
+# generate tokens for the scanner SA and all impersonated calls will fail
+# with PERMISSION_DENIED / iam.serviceAccounts.getAccessToken.
+HUMAN_ACCOUNT=$(gcloud config get-value account)
+echo "Granting roles/iam.serviceAccountTokenCreator to ${HUMAN_ACCOUNT}..."
+gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+  --member="user:${HUMAN_ACCOUNT}" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project="$PROJECT_ID"
+
+echo ""
+
+# ── Step 5: Enable keyless impersonation in gcloud config ───────────────────
+echo "Configuring keyless impersonation (no key file created)..."
+gcloud config set project "$PROJECT_ID"
 gcloud config set auth/impersonate_service_account "$SA_EMAIL"
 
-echo "Done. Scanner SA is configured for impersonation."
-echo "Run Phase 3 to verify permissions before scanning."
+echo ""
+echo "=== Done ==="
+echo "Scanner SA is configured for keyless impersonation."
+echo "Run scan-output/phases/verify-permissions.sh to confirm all roles took effect."
+echo "Then tell Claude: \"Gate cleared, continue to phase 3\""
 ```
 
 ### 2c. Verification Script
@@ -134,24 +178,71 @@ Write to `scan-output/phases/verify-permissions.sh`:
 
 ```bash
 #!/bin/bash
+# GCP Security Scanner — Permission Verification Script
 # Run after grant-permissions.sh to confirm all roles applied
+
+set -euo pipefail
 
 PROJECT_ID="<PROJECT_ID>"
 SA_EMAIL="gcp-doc-scanner@${PROJECT_ID}.iam.gserviceaccount.com"
+IMPER="--impersonate-service-account=${SA_EMAIL}"
 
-echo "=== Verifying granted roles ==="
-gcloud projects get-iam-policy $PROJECT_ID \
+PASS=0
+FAIL=0
+
+# Always start as human — capability tests pass explicit impersonation flag
+gcloud config unset auth/impersonate_service_account 2>/dev/null || true
+
+echo "=== GCP Security Scanner — Permission Verification ==="
+echo "SA:      $SA_EMAIL"
+echo "Human:   $(gcloud config get-value account)"
+echo "Project: $PROJECT_ID"
+echo ""
+
+run_test() {
+  local TEST_NAME="$1"
+  shift
+  if "$@" > /dev/null 2>&1; then
+    echo "PASS  $TEST_NAME"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL  $TEST_NAME"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+# Tests use explicit $IMPER flag to verify SA capabilities regardless of
+# ambient gcloud config state.
+echo "--- Base roles ---"
+run_test "roles/viewer" \
+  gcloud projects describe "$PROJECT_ID" $IMPER
+run_test "roles/iam.securityReviewer" \
+  gcloud projects get-iam-policy "$PROJECT_ID" --limit=1 $IMPER
+
+echo ""
+echo "--- Service roles ---"
+# <one run_test block per service-specific role, with $IMPER flag>
+
+echo ""
+echo "=== Summary ==="
+echo "PASS: $PASS  FAIL: $FAIL"
+
+# IAM policy read runs as human (no impersonation) to list what the SA was granted
+echo ""
+echo "=== Granted roles for SA (read as human) ==="
+gcloud projects get-iam-policy "$PROJECT_ID" \
   --flatten="bindings[].members" \
   --filter="bindings.members:${SA_EMAIL}" \
   --format="table(bindings.role)"
 
-echo ""
-echo "=== Test: impersonation context ==="
-gcloud config get-value auth/impersonate_service_account
-
-echo ""
-echo "=== Test: basic compute list ==="
-gcloud compute instances list --project=$PROJECT_ID 2>&1 | head -5
+if [ "$FAIL" -gt 0 ]; then
+  echo ""
+  echo "WARNING: $FAIL test(s) failed. Resolve before telling Claude to continue."
+  exit 1
+else
+  echo ""
+  echo "All tests passed. You may tell Claude: \"Gate cleared, continue to phase 3\""
+fi
 ```
 
 ### 2d. Human Checklist
