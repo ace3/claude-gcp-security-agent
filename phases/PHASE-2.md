@@ -121,11 +121,10 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 # <one block per enabled service, with comment>
 
-echo "Generating key..."
-gcloud iam service-accounts keys create ./gcp-scanner-key.json \
-  --iam-account=$SA_EMAIL
+echo "Configuring keyless impersonation..."
+gcloud config set auth/impersonate_service_account "$SA_EMAIL"
 
-echo "Done. Key written to ./gcp-scanner-key.json"
+echo "Done. Scanner SA is configured for impersonation."
 echo "Run Phase 3 to verify permissions before scanning."
 ```
 
@@ -147,8 +146,8 @@ gcloud projects get-iam-policy $PROJECT_ID \
   --format="table(bindings.role)"
 
 echo ""
-echo "=== Test: activate service account ==="
-gcloud auth activate-service-account --key-file=./gcp-scanner-key.json
+echo "=== Test: impersonation context ==="
+gcloud config get-value auth/impersonate_service_account
 
 echo ""
 echo "=== Test: basic compute list ==="
@@ -166,8 +165,8 @@ Complete all items before proceeding to Phase 3.
 
 ### Service Account Setup
 - [ ] Service account `gcp-doc-scanner@PROJECT.iam.gserviceaccount.com` created
-- [ ] Key downloaded to `./gcp-scanner-key.json`
-- [ ] Key file NOT committed to git (add to .gitignore)
+- [ ] `gcloud config set auth/impersonate_service_account gcp-doc-scanner@PROJECT.iam.gserviceaccount.com` set
+- [ ] No user-managed SA key created for scanner SA
 
 ### Roles Granted (tick each after running grant-permissions.sh)
 - [ ] roles/viewer

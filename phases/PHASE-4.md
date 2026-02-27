@@ -13,10 +13,9 @@
 gcloud compute instances list --format=json
 
 # Per instance: detailed config
-for INSTANCE in $(gcloud compute instances list --format="value(name,zone)"); do
-  NAME=$(echo $INSTANCE | cut -d' ' -f1)
-  ZONE=$(echo $INSTANCE | cut -d' ' -f2)
-  gcloud compute instances describe $NAME --zone=$ZONE --format=json
+gcloud compute instances list --format="csv[no-heading](name,zone)" | \
+while IFS=, read -r NAME ZONE; do
+  gcloud compute instances describe "$NAME" --zone="$ZONE" --format=json
 done
 
 # Shielded VM status
@@ -82,10 +81,9 @@ gcloud compute routes list --format=json
 
 # Cloud NAT
 gcloud compute routers list --format=json
-for ROUTER in $(gcloud compute routers list --format="value(name,region)"); do
-  NAME=$(echo $ROUTER | cut -d' ' -f1)
-  REGION=$(echo $ROUTER | cut -d' ' -f2)
-  gcloud compute routers get-nat-mapping-info $NAME --region=$REGION --format=json 2>/dev/null
+gcloud compute routers list --format="csv[no-heading](name,region)" | \
+while IFS=, read -r NAME REGION; do
+  gcloud compute routers get-nat-mapping-info "$NAME" --region="$REGION" --format=json 2>/dev/null
 done
 ```
 
@@ -159,10 +157,11 @@ graph TD
 gcloud iam service-accounts list --format=json
 
 # Per SA: keys and metadata
-for SA in $(gcloud iam service-accounts list --format="value(email)"); do
+gcloud iam service-accounts list --format="value(email)" | \
+while IFS= read -r SA; do
   echo "=== SA: $SA ==="
-  gcloud iam service-accounts describe $SA --format=json
-  gcloud iam service-accounts keys list --iam-account=$SA --format=json
+  gcloud iam service-accounts describe "$SA" --format=json
+  gcloud iam service-accounts keys list --iam-account="$SA" --format=json
 done
 
 # Project-level IAM bindings
@@ -297,10 +296,11 @@ gcloud iam workload-identity-pools providers list \
 gcloud storage buckets list --format=json
 
 # Per bucket: full security config
-for BUCKET in $(gcloud storage buckets list --format="value(name)"); do
+gcloud storage buckets list --format="value(name)" | \
+while IFS= read -r BUCKET; do
   echo "=== Bucket: $BUCKET ==="
-  gcloud storage buckets describe gs://$BUCKET --format=json
-  gcloud storage buckets get-iam-policy gs://$BUCKET --format=json
+  gcloud storage buckets describe "gs://$BUCKET" --format=json
+  gcloud storage buckets get-iam-policy "gs://$BUCKET" --format=json
 done
 
 # Public access prevention status
@@ -330,10 +330,11 @@ gcloud storage buckets list --format=json | \
 gcloud secrets list --format=json
 
 # Per secret: access policy and rotation
-for SECRET in $(gcloud secrets list --format="value(name)"); do
+gcloud secrets list --format="value(name)" | \
+while IFS= read -r SECRET; do
   echo "=== Secret: $SECRET ==="
-  gcloud secrets describe $SECRET --format=json
-  gcloud secrets get-iam-policy $SECRET --format=json
+  gcloud secrets describe "$SECRET" --format=json
+  gcloud secrets get-iam-policy "$SECRET" --format=json
 done
 
 # Secrets without rotation configured
@@ -348,8 +349,9 @@ gcloud secrets list --format=json | \
 ```bash
 # Key rings
 gcloud kms keyrings list --location=global --format=json
-for LOCATION in $(gcloud kms locations list --format="value(locationId)"); do
-  gcloud kms keyrings list --location=$LOCATION --format=json 2>/dev/null
+gcloud kms locations list --format="value(locationId)" | \
+while IFS= read -r LOCATION; do
+  gcloud kms keyrings list --location="$LOCATION" --format=json 2>/dev/null
 done
 
 # Keys per keyring
@@ -374,8 +376,9 @@ gcloud kms keys list --keyring=KEYRING --location=LOCATION --format=json | \
 gcloud sql instances list --format=json
 
 # Per instance: security config
-for INSTANCE in $(gcloud sql instances list --format="value(name)"); do
-  gcloud sql instances describe $INSTANCE --format=json | \
+gcloud sql instances list --format="value(name)" | \
+while IFS= read -r INSTANCE; do
+  gcloud sql instances describe "$INSTANCE" --format=json | \
     jq '{name, databaseVersion, settings: {
       ipConfiguration: .settings.ipConfiguration,
       backupConfiguration: .settings.backupConfiguration,
@@ -435,12 +438,11 @@ gcloud projects describe $PROJECT_ID --format=json | jq '.labels'
 gcloud run services list --platform=managed --format=json
 
 # Per service: full config
-for SERVICE in $(gcloud run services list --platform=managed --format="value(metadata.name,metadata.namespace)"); do
-  NAME=$(echo $SERVICE | cut -d' ' -f1)
-  REGION=$(echo $SERVICE | cut -d' ' -f2)
-  gcloud run services describe $NAME \
+gcloud run services list --platform=managed --format="csv[no-heading](metadata.name,metadata.namespace)" | \
+while IFS=, read -r NAME REGION; do
+  gcloud run services describe "$NAME" \
     --platform=managed \
-    --region=$REGION \
+    --region="$REGION" \
     --format=json
 done
 
@@ -464,11 +466,12 @@ gcloud run services list --platform=managed --format=json | \
 gcloud artifacts repositories list --format=json
 
 # Images per Docker repo (with vulnerability data)
-for REPO in $(gcloud artifacts repositories list \
+gcloud artifacts repositories list \
   --filter="format=DOCKER" \
-  --format="value(name)"); do
+  --format="value(name)" | \
+while IFS= read -r REPO; do
   echo "=== Repo: $REPO ==="
-  gcloud artifacts docker images list $REPO \
+  gcloud artifacts docker images list "$REPO" \
     --show-occurrences \
     --format=json 2>/dev/null | head -50
 done

@@ -26,7 +26,8 @@ At the start of every session, read `config.local.env` to load:
 PROJECT_ID=""
 ORG_ID=""                    # leave blank if no org
 BILLING_ACCOUNT_ID=""        # leave blank if no billing access
-KEY_FILE="./gcp-scanner-key.json"
+SCANNER_SA_EMAIL=""          # gcp-doc-scanner@PROJECT_ID.iam.gserviceaccount.com
+AUTH_MODE="impersonation"    # impersonation (recommended) or key-file (legacy)
 SCAN_TIMESTAMP=""            # auto-set at runtime
 REVIEWER_NAME=""             # human reviewer name for audit trail
 ```

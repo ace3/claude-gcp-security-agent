@@ -16,13 +16,22 @@ Catch permission gaps now, not mid-scan. Log all failures cleanly.
 ## Step 1 — Activate Scanner SA
 
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS="./gcp-scanner-key.json"
 export CLOUDSDK_CORE_PROJECT="$PROJECT_ID"
 
-gcloud auth activate-service-account \
-  --key-file=./gcp-scanner-key.json
+# Validate PROJECT_ID before using it in shell commands
+if ! [[ "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+  echo "Invalid PROJECT_ID format: $PROJECT_ID" >&2
+  exit 1
+fi
 
-gcloud config set project $PROJECT_ID
+SCANNER_SA="gcp-doc-scanner@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# Keyless auth path (recommended): impersonate the scanner SA
+gcloud config set project "$PROJECT_ID"
+gcloud config set auth/impersonate_service_account "$SCANNER_SA"
+
+# Optional legacy fallback only if impersonation cannot be used:
+# gcloud auth activate-service-account --key-file=./gcp-scanner-key.json
 ```
 
 ---
@@ -39,8 +48,8 @@ echo ""
 
 run_test() {
   local TEST_NAME="$1"
-  local CMD="$2"
-  if eval "$CMD" > /dev/null 2>&1; then
+  shift
+  if "$@" > /dev/null 2>&1; then
     echo "✅ PASS  $TEST_NAME"
     echo "{\"test\": \"$TEST_NAME\", \"status\": \"PASS\"}"
   else
@@ -50,62 +59,62 @@ run_test() {
 }
 
 # Base
-run_test "roles/viewer"                 "gcloud projects describe $PROJECT_ID"
-run_test "roles/iam.securityReviewer"   "gcloud projects get-iam-policy $PROJECT_ID --limit=1"
+run_test "roles/viewer"                 gcloud projects describe "$PROJECT_ID"
+run_test "roles/iam.securityReviewer"   gcloud projects get-iam-policy "$PROJECT_ID" --limit=1
 
 # Compute (if enabled)
-run_test "roles/compute.viewer"         "gcloud compute instances list --limit=1"
+run_test "roles/compute.viewer"         gcloud compute instances list --limit=1
 run_test "roles/recommender.firewallViewer" \
-  "gcloud recommender recommendations list --recommender=google.compute.firewall.Recommender \
-   --project=$PROJECT_ID --location=global --limit=1"
+  gcloud recommender recommendations list --recommender=google.compute.firewall.Recommender \
+  --project="$PROJECT_ID" --location=global --limit=1
 
 # Cloud Run (if enabled)
-run_test "roles/run.viewer"             "gcloud run services list --platform=managed --limit=1"
+run_test "roles/run.viewer"             gcloud run services list --platform=managed --limit=1
 
 # Cloud Storage (if enabled)
 run_test "roles/storage.legacyBucketReader" \
-  "gcloud storage buckets list --limit=1"
+  gcloud storage buckets list --limit=1
 
 # Cloud Build (if enabled)
 run_test "roles/cloudbuild.builds.viewer" \
-  "gcloud builds list --limit=1"
+  gcloud builds list --limit=1
 
 # Artifact Registry (if enabled)
 run_test "roles/artifactregistry.reader" \
-  "gcloud artifacts repositories list --limit=1"
+  gcloud artifacts repositories list --limit=1
 
 # IAM
 run_test "roles/iam.serviceAccountViewer" \
-  "gcloud iam service-accounts list --limit=1"
+  gcloud iam service-accounts list --limit=1
 
 # Secret Manager (if enabled)
-run_test "roles/secretmanager.viewer"   "gcloud secrets list --limit=1"
+run_test "roles/secretmanager.viewer"   gcloud secrets list --limit=1
 
 # Logging
 run_test "roles/logging.viewer"         \
-  "gcloud logging read 'timestamp>=\"2020-01-01T00:00:00Z\"' --limit=1"
+  gcloud logging read 'timestamp>="2020-01-01T00:00:00Z"' --limit=1
 
 # Monitoring
 run_test "roles/monitoring.viewer"      \
-  "gcloud monitoring dashboards list --limit=1"
+  gcloud monitoring dashboards list --limit=1
 
 # KMS (if enabled)
 run_test "roles/cloudkms.viewer"        \
-  "gcloud kms keyrings list --location=global --limit=1"
+  gcloud kms keyrings list --location=global --limit=1
 
 # Recommender (IAM)
 run_test "roles/recommender.iamViewer"  \
-  "gcloud recommender recommendations list \
-   --recommender=google.iam.policy.Recommender \
-   --project=$PROJECT_ID --location=global --limit=1"
+  gcloud recommender recommendations list \
+  --recommender=google.iam.policy.Recommender \
+  --project="$PROJECT_ID" --location=global --limit=1
 
 # Org policy
 run_test "roles/orgpolicy.policyViewer" \
-  "gcloud org-policies list --project=$PROJECT_ID --limit=1"
+  gcloud org-policies list --project="$PROJECT_ID" --limit=1
 
 # SCC (if enabled)
 run_test "roles/securitycenter.findingsViewer" \
-  "gcloud scc findings list projects/$PROJECT_ID --limit=1"
+  gcloud scc findings list "projects/$PROJECT_ID" --limit=1
 ```
 
 ---

@@ -33,12 +33,13 @@ gcloud compute forwarding-rules list --format=json | \
   jq '[.[] | select(.loadBalancingScheme == "EXTERNAL")]'
 
 # Public buckets (storage entry/exfil points)
-for bucket in $(gcloud storage buckets list --format="value(name)"); do
-  PUBLIC=$(gcloud storage buckets get-iam-policy gs://$bucket --format=json 2>/dev/null | \
+gcloud storage buckets list --format="value(name)" | \
+while IFS= read -r bucket; do
+  PUBLIC=$(gcloud storage buckets get-iam-policy "gs://$bucket" --format=json 2>/dev/null | \
     jq '.bindings[] | select(.members[] | test("allUsers|allAuthenticatedUsers"))' 2>/dev/null)
   if [ ! -z "$PUBLIC" ]; then
     echo "PUBLIC BUCKET: $bucket"
-    echo $PUBLIC
+    echo "$PUBLIC"
   fi
 done
 

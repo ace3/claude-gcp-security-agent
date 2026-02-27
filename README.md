@@ -207,11 +207,17 @@ Add a new section to the relevant PHASE-N.md file following the same pattern:
 ## Security Notes
 
 - The scanner SA is **read-only** — it cannot modify any resources
-- SA key file (`gcp-scanner-key.json`) should be in `.gitignore`
-- Delete the SA and key after the scan is complete:
+- Use **service account impersonation** (keyless) by default:
+  ```bash
+  gcloud config set auth/impersonate_service_account gcp-doc-scanner@PROJECT.iam.gserviceaccount.com
+  ```
+- If a legacy key file is used temporarily, keep it in `.gitignore` and delete it immediately after use:
+  ```bash
+  rm ./gcp-scanner-key.json
+  ```
+- Delete the scanner SA after the scan is complete:
   ```bash
   gcloud iam service-accounts delete gcp-doc-scanner@PROJECT.iam.gserviceaccount.com
-  rm ./gcp-scanner-key.json
   ```
 - Scan output may contain sensitive resource names and config details — treat as confidential
 
