@@ -146,7 +146,7 @@ If >3 tests FAIL or core roles fail (roles/viewer, roles/iam.securityReviewer):
 
 ```json
 {
-  "phase": 3,
+  "phase": "3",
   "timestamp": "<ISO8601>",
   "project_id": "<PROJECT_ID>",
   "sa_email": "gcp-doc-scanner@<PROJECT_ID>.iam.gserviceaccount.com",

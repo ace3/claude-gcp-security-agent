@@ -191,7 +191,7 @@ Complete all items before proceeding to Phase 3.
 
 ```json
 {
-  "phase": 2,
+  "phase": "2",
   "timestamp": "<ISO8601>",
   "project_id": "<PROJECT_ID>",
   "sa_email": "gcp-doc-scanner@<PROJECT_ID>.iam.gserviceaccount.com",

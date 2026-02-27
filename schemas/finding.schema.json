@@ -83,12 +83,17 @@
       "enum": [
         "service_account",
         "iam_binding",
+        "iam",
         "compute_instance",
         "firewall_rule",
         "network",
         "subnet",
         "disk",
         "gcs_bucket",
+        "bigquery",
+        "bigquery_dataset",
+        "datastore",
+        "firestore",
         "cloud_run_service",
         "artifact_registry_repo",
         "cloud_build_trigger",
@@ -100,6 +105,8 @@
         "log_sink",
         "alert_policy",
         "scc_finding",
+        "workload_identity_pool",
+        "vpc_connector",
         "project",
         "organization"
       ]

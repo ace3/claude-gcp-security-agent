@@ -80,7 +80,7 @@ DISABLED=()
 
 for SERVICE in "${SERVICES[@]}"; do
   STATUS=$(gcloud services list \
-    --project=$PROJECT_ID \
+    --project="$PROJECT_ID" \
     --filter="name:$SERVICE" \
     --format="value(state)" 2>/dev/null)
 
@@ -98,7 +98,8 @@ echo "=== Summary ==="
 echo "Enabled:  ${#ENABLED[@]}"
 echo "Disabled: ${#DISABLED[@]}"
 echo ""
-echo "ENABLED_SERVICES_JSON=$(echo ${ENABLED[@]} | jq -R 'split(" ")')"
+ENABLED_SERVICES_JSON=$(printf '%s\n' "${ENABLED[@]}" | jq -R . | jq -s .)
+echo "Enabled services JSON: $ENABLED_SERVICES_JSON"
 ```
 
 ---
@@ -109,7 +110,7 @@ After running the discovery, write `scan-output/phases/phase-1-state.json`:
 
 ```json
 {
-  "phase": 1,
+  "phase": "1",
   "timestamp": "<ISO8601>",
   "project_id": "<PROJECT_ID>",
   "enabled_services": [

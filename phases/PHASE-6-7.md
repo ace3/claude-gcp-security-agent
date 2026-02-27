@@ -188,17 +188,26 @@ defensible in an audit context and creates a baseline for future scans.
 ## Step 1 — Compute File Hashes
 
 ```bash
+# Cross-platform SHA256 wrapper (macOS: shasum -a 256; Linux: sha256sum)
+_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1"
+  else
+    shasum -a 256 "$1"
+  fi
+}
+
 # Hash all output files
-find scan-output/ -type f | sort | while read FILE; do
-  sha256sum "$FILE"
+find scan-output/ -type f | sort | while IFS= read -r FILE; do
+  _sha256 "$FILE"
 done > scan-output/MANIFEST.sha256
 
 # Hash the CLAUDE.md that drove the scan
-sha256sum CLAUDE.md >> scan-output/MANIFEST.sha256
+_sha256 CLAUDE.md >> scan-output/MANIFEST.sha256
 
 # Hash each phase file
 for PHASE in phases/PHASE-*.md; do
-  sha256sum "$PHASE" >> scan-output/MANIFEST.sha256
+  _sha256 "$PHASE" >> scan-output/MANIFEST.sha256
 done
 ```
 
@@ -217,7 +226,7 @@ Write to `scan-output/SCAN-INTEGRITY.md`:
 | Scan Start | <ISO8601> |
 | Scan End | <ISO8601> |
 | Scanner SA | gcp-doc-scanner@<PROJECT_ID>.iam.gserviceaccount.com |
-| Claude Model | claude-sonnet-4-20250514 |
+| Claude Model | <CLAUDE_MODEL_ID> |
 | CLAUDE.md SHA256 | <hash> |
 | Reviewer | <NAME> |
 | Review Date | <DATE> |

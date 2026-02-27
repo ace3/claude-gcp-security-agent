@@ -37,7 +37,7 @@ gcloud storage buckets list --format="value(name)" | \
 while IFS= read -r bucket; do
   PUBLIC=$(gcloud storage buckets get-iam-policy "gs://$bucket" --format=json 2>/dev/null | \
     jq '.bindings[] | select(.members[] | test("allUsers|allAuthenticatedUsers"))' 2>/dev/null)
-  if [ ! -z "$PUBLIC" ]; then
+  if [ -n "$PUBLIC" ]; then
     echo "PUBLIC BUCKET: $bucket"
     echo "$PUBLIC"
   fi
@@ -54,11 +54,11 @@ gcloud builds triggers list --format=json | \
 
 ```bash
 # SA-to-resource binding map (who can reach what after initial compromise)
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
+gcloud projects get-iam-policy "$PROJECT_ID" --format=json | \
   jq '.bindings[] | select(.members[] | startswith("serviceAccount:"))'
 
 # Which SAs can impersonate other SAs (iam.serviceAccounts.actAs)
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
+gcloud projects get-iam-policy "$PROJECT_ID" --format=json | \
   jq '.bindings[] | select(.role | test("iam.serviceAccountUser|iam.serviceAccountTokenCreator"))'
 
 # Cloud Run service accounts (compromise Cloud Run = compromise these SAs)
@@ -67,7 +67,7 @@ gcloud run services list --platform=managed --format=json | \
   serviceAccount: .spec.template.spec.serviceAccountName}]'
 
 # Cloud Build SA (compromise pipeline = compromise build SA)
-gcloud projects get-iam-policy $PROJECT_ID --format=json | \
+gcloud projects get-iam-policy "$PROJECT_ID" --format=json | \
   jq '.bindings[] | select(.members[] | contains("cloudbuild.gserviceaccount.com"))'
 ```
 
