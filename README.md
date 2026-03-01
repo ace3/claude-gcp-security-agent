@@ -189,3 +189,100 @@ Add a new section to the relevant PHASE-N.md following the same pattern:
 | Full posture | All | Monthly |
 | Post-change | Relevant phase | After IAM or rules changes |
 | Pre-audit | All | Before compliance reviews |
+
+---
+
+## Compute Engine Firewall Security Audit Agent
+
+A companion agent that audits VPC firewall rules and firewall policies for security
+misconfigurations. Uses a separate orchestrator: **`CLAUDE-FIREWALL.md`**.
+
+### Quick Start
+
+```bash
+# Same config file -- just add FOLDER_ID if needed
+echo 'FOLDER_ID=""' >> config.local.env
+
+# Start Claude Code and run the firewall audit
+claude
+```
+
+```
+You: Run firewall phase 1
+```
+
+Or run everything: `"Run all firewall"`
+
+### Firewall Phase Flow
+
+```
+Phase 1    Network & compute discovery (VPCs, subnets, instances, tags)
+    |
+Phase 2    VPC firewall rules audit (0.0.0.0/0, SSH/RDP, allow-all)
+    |
+Phase 3    Firewall policies audit (hierarchical + network policies)
+    |
+Phase 4    Effective firewall & exposure analysis (+ Mermaid diagrams)
+    |
+Phase 5    Risk synthesis & remediation plan
+    |
+    [REVIEW GATE] -- human reviews findings before final docs
+    |
+    Final docs (overview, remediation plan, quick wins)
+```
+
+### Firewall Output Structure
+
+```
+scan-output-firewall/
++-- phases/                        <- Raw phase outputs (human + JSON)
++-- docs/
+|   +-- 00-overview.md             <- Executive summary + score
+|   +-- 01-vpc-firewall-rules.md   <- VPC firewall findings
+|   +-- 02-firewall-policies.md    <- Firewall policy findings
+|   +-- 03-exposure-analysis.md    <- Network exposure findings
+|   +-- remediation-plan.md        <- Prioritized with fix commands
+|   +-- quick-wins.md              <- HIGH+ fixes in < 5 min
++-- diagrams/
+|   +-- network-topology.md        <- VPC → subnets → instances
+|   +-- ingress-exposure-map.md    <- Internet → rules → instances blast radius
+|   +-- rule-evaluation-chain.md   <- Policy evaluation order
++-- errors/
+|   +-- permission-errors.log
++-- SCAN-INTEGRITY.md
+```
+
+### Firewall Control ID Registry
+
+All findings use stable IDs in format `FW-[CATEGORY]-[NUMBER]`:
+
+| Category | Controls | Focus |
+|----------|----------|-------|
+| FW-VPC | 10 controls | VPC firewall rule misconfigurations |
+| FW-POL | 5 controls | Firewall policy misconfigurations |
+| FW-NET | 3 controls | Network exposure & hygiene |
+
+Full registry: `schemas/firewall-control-id-registry.md`
+
+### Firewall Agent Files
+
+```
++-- CLAUDE-FIREWALL.md             <- Firewall agent orchestrator
++-- phases/
+|   +-- FIREWALL-PHASE-1.md        <- Network & compute discovery
+|   +-- FIREWALL-PHASE-2.md        <- VPC firewall rules audit (core)
+|   +-- FIREWALL-PHASE-3.md        <- Firewall policies audit
+|   +-- FIREWALL-PHASE-4.md        <- Exposure analysis + diagrams
+|   +-- FIREWALL-PHASE-5.md        <- Risk synthesis (+ REVIEW GATE)
++-- schemas/
+    +-- firewall-finding.schema.json
+    +-- firewall-phase-state.schema.json
+    +-- firewall-control-id-registry.md
+```
+
+### Additional Permissions for Firewall Audit
+
+The firewall agent needs `compute.firewalls.list`, `compute.instances.list`,
+`compute.networks.list` and `compute.firewallPolicies.list`. These are included
+in `roles/compute.viewer`. For hierarchical firewall policies, org-level read
+access is needed (`roles/compute.orgFirewallPolicyUser` or equivalent).

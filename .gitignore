@@ -4,6 +4,8 @@ scan-output/
 # ─── GCP credentials & key files ─────────────────────────────────────────────
 *.json
 !schemas/*.json          # keep schema definitions
+!schemas/firewall-finding.schema.json
+!schemas/firewall-phase-state.schema.json
 gcp-*.key
 *.p12
 *.pem

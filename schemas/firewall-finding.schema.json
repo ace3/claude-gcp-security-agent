@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Firewall Security Finding",
+  "description": "Standard schema for all findings produced by the Compute Engine Firewall Security Audit Agent",
+  "type": "object",
+  "required": [
+    "id",
+    "internal_id",
+    "phase",
+    "severity",
+    "title",
+    "resource_type",
+    "resource_name",
+    "finding",
+    "why_it_matters",
+    "remediation_command",
+    "nist_function",
+    "score",
+    "timestamp"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique finding UUID for this scan",
+      "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    },
+    "internal_id": {
+      "type": "string",
+      "description": "Stable control ID format: FW-[CATEGORY]-[NUMBER]",
+      "pattern": "^FW-[A-Z]+-[0-9]+$",
+      "examples": [
+        "FW-VPC-01",
+        "FW-POL-03",
+        "FW-NET-01"
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["1", "2", "3", "4", "5"],
+      "description": "Phase that generated this finding"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+      "description": "Base severity"
+    },
+    "score": {
+      "type": "number",
+      "description": "Numeric score: CRITICAL=10, HIGH=7, MEDIUM=4, LOW=1",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "title": {
+      "type": "string",
+      "description": "Short human-readable title",
+      "example": "VPC firewall rule allows ingress from 0.0.0.0/0"
+    },
+    "finding": {
+      "type": "string",
+      "description": "Detailed description of what was found"
+    },
+    "why_it_matters": {
+      "type": "string",
+      "description": "Plain-language explanation of the risk"
+    },
+    "resource_type": {
+      "type": "string",
+      "enum": [
+        "firewall_rule",
+        "firewall_policy",
+        "firewall_policy_rule",
+        "compute_instance",
+        "vpc_network",
+        "subnet",
+        "network_tag",
+        "instance_group"
+      ]
+    },
+    "resource_name": {
+      "type": "string",
+      "description": "Full resource identifier (e.g. projects/my-project/global/firewalls/rule-name)"
+    },
+    "remediation_command": {
+      "type": "string",
+      "description": "Exact gcloud command to fix this finding (with $PROJECT_ID placeholder)"
+    },
+    "remediation_effort": {
+      "type": "string",
+      "enum": ["< 5 minutes", "< 30 minutes", "< 2 hours", "< 1 day", "> 1 day"],
+      "description": "Estimated effort to remediate"
+    },
+    "rollback_command": {
+      "type": "string",
+      "description": "Command to revert the fix if needed",
+      "nullable": true
+    },
+    "nist_function": {
+      "type": "string",
+      "enum": ["GV", "ID", "PR", "DE", "RS", "RC"],
+      "description": "NIST CSF 2.0 function: GV=Govern, ID=Identify, PR=Protect, DE=Detect, RS=Respond, RC=Recover"
+    },
+    "nist_category": {
+      "type": "string",
+      "description": "NIST CSF category code",
+      "example": "PR.AC-3",
+      "nullable": true
+    },
+    "cis_benchmark": {
+      "type": "string",
+      "description": "CIS GCP Benchmark reference (e.g. 3.6, 3.7)",
+      "nullable": true
+    },
+    "affected_instances": {
+      "type": "array",
+      "description": "List of instance names affected by this finding",
+      "items": {"type": "string"},
+      "nullable": true
+    },
+    "false_positive_risk": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH"],
+      "description": "How likely this finding could be a false positive for intentional config"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO8601 timestamp when finding was generated"
+    }
+  }
+}
